@@ -4,36 +4,44 @@ import com.google.common.collect.Maps;
 import org.jetbrains.annotations.NotNull;
 import su.plo.config.provider.ConfigurationProvider;
 import su.plo.config.provider.toml.TomlConfiguration;
+import su.plo.lib.api.server.entity.MinecraftServerPlayerEntity;
+import su.plo.lib.api.server.player.MinecraftServerPlayer;
 import su.plo.lib.api.server.world.ServerPos3d;
+import su.plo.voice.api.addon.AddonScope;
 import su.plo.voice.api.addon.annotation.Addon;
+import su.plo.voice.api.event.EventCancellableBase;
 import su.plo.voice.api.event.EventSubscribe;
 import su.plo.voice.api.server.PlasmoVoiceServer;
-import su.plo.voice.api.server.audio.source.ServerAudioSource;
+import su.plo.voice.api.server.audio.capture.SelfActivationInfo;
 import su.plo.voice.api.server.audio.source.ServerEntitySource;
 import su.plo.voice.api.server.audio.source.ServerPlayerSource;
+import su.plo.voice.api.server.audio.source.ServerPositionalSource;
 import su.plo.voice.api.server.audio.source.ServerStaticSource;
-import su.plo.voice.api.server.event.VoiceServerConfigLoadedEvent;
 import su.plo.voice.api.server.event.VoiceServerInitializeEvent;
 import su.plo.voice.api.server.event.audio.source.ServerSourceAudioPacketEvent;
 import su.plo.voice.api.server.event.audio.source.ServerSourcePacketEvent;
-import su.plo.voice.api.server.event.connection.UdpDisconnectEvent;
-import su.plo.voice.api.server.player.VoicePlayer;
+import su.plo.voice.api.server.event.config.VoiceServerConfigLoadedEvent;
+import su.plo.voice.api.server.event.connection.UdpClientDisconnectedEvent;
+import su.plo.voice.api.server.player.VoiceServerPlayer;
 import su.plo.voice.proto.data.audio.source.PlayerSourceInfo;
 import su.plo.voice.proto.packets.Packet;
 import su.plo.voice.proto.packets.tcp.clientbound.SourceAudioEndPacket;
+import su.plo.voice.proto.packets.tcp.clientbound.SourceInfoPacket;
 import su.plo.voice.proto.packets.udp.clientbound.SourceAudioPacket;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
-@Addon(id = "spectator", scope = Addon.Scope.SERVER, version = "1.0.0", authors = {"Apehum"})
+@Addon(id = "spectator", scope = AddonScope.SERVER, version = "1.0.0", authors = {"Apehum"})
 public final class SpectatorAddon {
 
     private static final ConfigurationProvider toml = ConfigurationProvider.getProvider(TomlConfiguration.class);
 
     private PlasmoVoiceServer voiceServer;
+    private SelfActivationInfo selfActivationInfo;
     private SpectatorConfig config;
 
     private final Map<UUID, ServerStaticSource> staticSourceById = Maps.newConcurrentMap();
@@ -43,6 +51,7 @@ public final class SpectatorAddon {
     @EventSubscribe
     public void onInitialize(@NotNull VoiceServerInitializeEvent event) {
         this.voiceServer = event.getServer();
+        this.selfActivationInfo = new SelfActivationInfo(voiceServer.getUdpConnectionManager());
     }
 
     @EventSubscribe
@@ -57,12 +66,12 @@ public final class SpectatorAddon {
             throw new IllegalStateException("Failed to load config", e);
         }
 
-        staticSourceById.forEach((playerId, source) -> source.setIconVisible(config.isShowIcon()));
+        staticSourceById.forEach((playerId, source) -> source.setIconVisible(config.showIcon()));
     }
 
     @EventSubscribe
-    public void onClientDisconnect(@NotNull UdpDisconnectEvent event) {
-        VoicePlayer player = event.getConnection().getPlayer();
+    public void onClientDisconnect(@NotNull UdpClientDisconnectedEvent event) {
+        VoiceServerPlayer player = event.getConnection().getPlayer();
         removeSources(player);
     }
 
@@ -72,28 +81,29 @@ public final class SpectatorAddon {
 
         ServerPlayerSource playerSource = (ServerPlayerSource) event.getSource();
         SourceAudioPacket sourcePacket = event.getPacket();
-        VoicePlayer player = playerSource.getPlayer();
+        VoiceServerPlayer player = playerSource.getPlayer();
 
-        if (!player.getInstance().isSpectator()) {
-            removeSources(player);
-            return;
-        }
+        getTargetSource(playerSource, player, event).ifPresent((source) -> {
+            SourceAudioPacket sourceAudioPacket = new SourceAudioPacket(
+                    event.getPacket().getSequenceNumber(),
+                    (byte) 0,
+                    sourcePacket.getData(),
+                    source.getId(),
+                    event.getDistance()
+            );
 
-        ServerAudioSource<?> source;
-        if (player.getInstance().getSpectatorTarget().isPresent()) {
-            event.setCancelled(true);
-            source = getEntitySource(playerSource, player);
-        } else {
-            source = getStaticSource(playerSource, player);
-        }
-
-        source.sendAudioPacket(new SourceAudioPacket(
-                event.getPacket().getSequenceNumber(),
-                (byte) 0,
-                sourcePacket.getData(),
-                source.getId(),
-                event.getDistance()
-        ), event.getDistance());
+            if (source.sendAudioPacket(sourceAudioPacket, event.getDistance()) &&
+                    source instanceof ServerEntitySource &&
+                    event.getActivationId().isPresent()
+            ) {
+                selfActivationInfo.sendAudioInfo(
+                        player,
+                        source,
+                        event.getActivationId().get(),
+                        sourceAudioPacket
+                );
+            }
+        });
     }
 
     @EventSubscribe
@@ -101,31 +111,41 @@ public final class SpectatorAddon {
         if (!(event.getSource() instanceof ServerPlayerSource)) return;
 
         ServerPlayerSource playerSource = (ServerPlayerSource) event.getSource();
-        Packet<?> sourcePacket = event.getPacket();
-        VoicePlayer player = playerSource.getPlayer();
+        final Packet<?> sourcePacket = event.getPacket();
+        VoiceServerPlayer player = playerSource.getPlayer();
 
-        if (!player.getInstance().isSpectator()) {
-            removeSources(player);
-            return;
-        }
+        getTargetSource(playerSource, player, event).ifPresent((source) -> {
+            if (sourcePacket instanceof SourceInfoPacket && source instanceof ServerEntitySource) {
+                selfActivationInfo.updateSelfSourceInfo(player, source, ((SourceInfoPacket) sourcePacket).getSourceInfo());
+            } else if (sourcePacket instanceof SourceAudioEndPacket) {
+                SourceAudioEndPacket sourceEndPacket = (SourceAudioEndPacket) sourcePacket;
+                SourceAudioEndPacket targetSourcePacket = new SourceAudioEndPacket(source.getId(), sourceEndPacket.getSequenceNumber());
 
-        ServerAudioSource<?> source;
-        if (player.getInstance().getSpectatorTarget().isPresent()) {
-            event.setCancelled(true);
-            source = getEntitySource(playerSource, player);
-        } else {
-            source = getStaticSource(playerSource, player);
-        }
-
-        if (sourcePacket instanceof SourceAudioEndPacket) {
-            SourceAudioEndPacket sourceEndPacket = (SourceAudioEndPacket) sourcePacket;
-            sourcePacket = new SourceAudioEndPacket(source.getId(), sourceEndPacket.getSequenceNumber());
-        }
-
-        source.sendPacket(sourcePacket, event.getDistance());
+                source.sendPacket(targetSourcePacket, event.getDistance());
+                if (source instanceof ServerEntitySource) {
+                    player.sendPacket(targetSourcePacket);
+                }
+            }
+        });
     }
 
-    private void removeSources(@NotNull VoicePlayer player) {
+    private Optional<ServerPositionalSource<?>> getTargetSource(@NotNull ServerPlayerSource source,
+                                                                @NotNull VoiceServerPlayer player,
+                                                                @NotNull EventCancellableBase event) {
+        if (!player.getInstance().isSpectator()) {
+            removeSources(player);
+            return Optional.empty();
+        }
+
+        if (player.getInstance().getSpectatorTarget().isPresent()) {
+            event.setCancelled(true);
+            return Optional.of(getEntitySource(source, player));
+        } else {
+            return Optional.of(getStaticSource(source, player));
+        }
+    }
+
+    private void removeSources(@NotNull VoiceServerPlayer player) {
         lastPlayerPositionTimestampById.remove(player.getInstance().getUUID());
         ServerStaticSource staticSource = staticSourceById.remove(player.getInstance().getUUID());
         if (staticSource != null) voiceServer.getSourceManager().remove(staticSource);
@@ -135,7 +155,7 @@ public final class SpectatorAddon {
     }
 
     private ServerStaticSource getStaticSource(@NotNull ServerPlayerSource playerSource,
-                                               @NotNull VoicePlayer player) {
+                                               @NotNull VoiceServerPlayer player) {
         PlayerSourceInfo sourceInfo = playerSource.getInfo();
 
         ServerStaticSource staticSource = staticSourceById.computeIfAbsent(
@@ -148,10 +168,10 @@ public final class SpectatorAddon {
                             sourceInfo.getCodec(),
                             sourceInfo.isStereo()
                     );
-                    source.setIconVisible(config.isShowIcon());
+                    source.setIconVisible(config.showIcon());
 
                     source.addFilter((listener) ->
-                            !listener.equals(player) && !listener.getInstance().isSpectator()
+                            !listener.equals(player) && !((MinecraftServerPlayerEntity) listener.getInstance()).isSpectator()
                     );
                     return source;
                 }
@@ -164,7 +184,7 @@ public final class SpectatorAddon {
     }
 
     private ServerEntitySource getEntitySource(@NotNull ServerPlayerSource playerSource,
-                                               @NotNull VoicePlayer player) {
+                                               @NotNull VoiceServerPlayer player) {
         PlayerSourceInfo sourceInfo = playerSource.getInfo();
 
         ServerEntitySource entitySource = entitySourceById.computeIfAbsent(
@@ -177,7 +197,7 @@ public final class SpectatorAddon {
                             sourceInfo.getCodec(),
                             sourceInfo.isStereo()
                     );
-                    source.setIconVisible(config.isShowIcon());
+                    source.setIconVisible(config.showIcon());
 
                     source.addFilter((listener) -> !listener.equals(player));
                     return source;
@@ -189,7 +209,7 @@ public final class SpectatorAddon {
         return entitySource;
     }
 
-    private void updateSourcePosition(@NotNull VoicePlayer player, @NotNull ServerStaticSource source) {
+    private void updateSourcePosition(@NotNull VoiceServerPlayer player, @NotNull ServerStaticSource source) {
         long lastUpdate = lastPlayerPositionTimestampById.getOrDefault(
                 player.getInstance().getUUID(),
                 0L
