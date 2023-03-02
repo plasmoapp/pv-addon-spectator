@@ -71,7 +71,7 @@ public final class SpectatorAddon {
 
     @EventSubscribe
     public void onClientDisconnect(@NotNull UdpClientDisconnectedEvent event) {
-        VoiceServerPlayer player = event.getConnection().getPlayer();
+        VoiceServerPlayer player = (VoiceServerPlayer) event.getConnection().getPlayer();
         removeSources(player);
     }
 
@@ -156,7 +156,7 @@ public final class SpectatorAddon {
 
     private ServerStaticSource getStaticSource(@NotNull ServerPlayerSource playerSource,
                                                @NotNull VoiceServerPlayer player) {
-        PlayerSourceInfo sourceInfo = playerSource.getInfo();
+        PlayerSourceInfo sourceInfo = playerSource.getSourceInfo();
 
         ServerStaticSource staticSource = staticSourceById.computeIfAbsent(
                 player.getInstance().getUUID(),
@@ -185,7 +185,7 @@ public final class SpectatorAddon {
 
     private ServerEntitySource getEntitySource(@NotNull ServerPlayerSource playerSource,
                                                @NotNull VoiceServerPlayer player) {
-        PlayerSourceInfo sourceInfo = playerSource.getInfo();
+        PlayerSourceInfo sourceInfo = playerSource.getSourceInfo();
 
         ServerEntitySource entitySource = entitySourceById.computeIfAbsent(
                 player.getInstance().getUUID(),
