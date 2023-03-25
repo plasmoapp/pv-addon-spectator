@@ -1,6 +1,7 @@
 package su.plo.voice.spectator;
 
 import com.google.common.collect.Maps;
+import com.google.inject.Inject;
 import lombok.EqualsAndHashCode;
 import lombok.RequiredArgsConstructor;
 import org.jetbrains.annotations.NotNull;
@@ -8,7 +9,8 @@ import su.plo.config.provider.ConfigurationProvider;
 import su.plo.config.provider.toml.TomlConfiguration;
 import su.plo.lib.api.server.entity.MinecraftServerPlayerEntity;
 import su.plo.lib.api.server.world.ServerPos3d;
-import su.plo.voice.api.addon.AddonScope;
+import su.plo.voice.api.addon.AddonInitializer;
+import su.plo.voice.api.addon.AddonLoaderScope;
 import su.plo.voice.api.addon.annotation.Addon;
 import su.plo.voice.api.event.EventCancellableBase;
 import su.plo.voice.api.event.EventSubscribe;
@@ -18,10 +20,9 @@ import su.plo.voice.api.server.audio.source.ServerEntitySource;
 import su.plo.voice.api.server.audio.source.ServerPlayerSource;
 import su.plo.voice.api.server.audio.source.ServerPositionalSource;
 import su.plo.voice.api.server.audio.source.ServerStaticSource;
-import su.plo.voice.api.server.event.VoiceServerInitializeEvent;
 import su.plo.voice.api.server.event.audio.source.ServerSourceAudioPacketEvent;
 import su.plo.voice.api.server.event.audio.source.ServerSourcePacketEvent;
-import su.plo.voice.api.server.event.config.VoiceServerConfigLoadedEvent;
+import su.plo.voice.api.server.event.config.VoiceServerConfigReloadedEvent;
 import su.plo.voice.api.server.event.connection.UdpClientDisconnectedEvent;
 import su.plo.voice.api.server.player.VoiceServerPlayer;
 import su.plo.voice.proto.data.audio.codec.opus.OpusDecoderInfo;
@@ -37,11 +38,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-@Addon(id = "spectator", scope = AddonScope.SERVER, version = "1.0.0", authors = {"Apehum"})
-public final class SpectatorAddon {
+@Addon(id = "pv-addon-spectator", scope = AddonLoaderScope.SERVER, version = "1.0.0", authors = {"Apehum"})
+public final class SpectatorAddon implements AddonInitializer {
 
     private static final ConfigurationProvider toml = ConfigurationProvider.getProvider(TomlConfiguration.class);
 
+    @Inject
     private PlasmoVoiceServer voiceServer;
     private SelfActivationInfo selfActivationInfo;
     private SpectatorConfig config;
@@ -50,25 +52,15 @@ public final class SpectatorAddon {
     private final Map<SourceLineKey, ServerEntitySource> entitySourceById = Maps.newConcurrentMap();
     private final Map<UUID, Long> lastPlayerPositionTimestampById = Maps.newConcurrentMap();
 
-    @EventSubscribe
-    public void onInitialize(@NotNull VoiceServerInitializeEvent event) {
-        this.voiceServer = event.getServer();
+    @Override
+    public void onAddonInitialize() {
         this.selfActivationInfo = new SelfActivationInfo(voiceServer.getUdpConnectionManager());
+        loadConfig();
     }
 
     @EventSubscribe
-    public void onConfigLoaded(@NotNull VoiceServerConfigLoadedEvent event) {
-        try {
-            File addonFolder = new File(voiceServer.getConfigFolder(), "addons");
-            File configFile = new File(addonFolder, "spectator.toml");
-
-            this.config = toml.load(SpectatorConfig.class, configFile, false);
-            toml.save(SpectatorConfig.class, config, configFile);
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to load config", e);
-        }
-
-        staticSourceById.forEach((playerId, source) -> source.setIconVisible(config.showIcon()));
+    public void onConfigLoaded(@NotNull VoiceServerConfigReloadedEvent event) {
+        loadConfig();
     }
 
     @EventSubscribe
@@ -129,6 +121,20 @@ public final class SpectatorAddon {
                 }
             }
         });
+    }
+
+    private void loadConfig() {
+        try {
+            File addonFolder = new File(voiceServer.getConfigsFolder(), "pv-addon-spectator");
+            File configFile = new File(addonFolder, "spectator.toml");
+
+            this.config = toml.load(SpectatorConfig.class, configFile, false);
+            toml.save(SpectatorConfig.class, config, configFile);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to load config", e);
+        }
+
+        staticSourceById.forEach((playerId, source) -> source.setIconVisible(config.showIcon()));
     }
 
     private Optional<ServerPositionalSource<?>> getTargetSource(@NotNull ServerPlayerSource source,
