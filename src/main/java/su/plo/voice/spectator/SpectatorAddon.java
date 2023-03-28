@@ -126,7 +126,7 @@ public final class SpectatorAddon implements AddonInitializer {
     private void loadConfig() {
         try {
             File addonFolder = new File(voiceServer.getConfigsFolder(), "pv-addon-spectator");
-            File configFile = new File(addonFolder, "spectator.toml");
+            File configFile = new File(addonFolder, "config.toml");
 
             this.config = toml.load(SpectatorConfig.class, configFile, false);
             toml.save(SpectatorConfig.class, config, configFile);
