@@ -16,4 +16,4 @@
 
 Server-side [Plasmo Voice](https://modrinth.com/mod/plasmo-voice) add-on.
 
-With this add-on all players can hear spectators.
+With this add-on, all players can hear spectators.
