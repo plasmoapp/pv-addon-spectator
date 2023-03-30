@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "su.plo"
-version = "1.0.0-SNAPSHOT"
+version = "1.0.0"
 
 dependencies {
     compileOnly("su.plo.voice.api:server:2.0.0+ALPHA")
