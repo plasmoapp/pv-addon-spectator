@@ -1,16 +1,20 @@
 plugins {
     id("java")
-    kotlin("jvm") version("1.6.10")
-    id("su.plo.voice.plugin") version("1.0.0")
+    kotlin("jvm") version(libs.versions.kotlin.get())
+    alias(libs.plugins.pv.entrypoints)
+    alias(libs.plugins.pv.java.templates)
 }
 
-group = "su.plo"
-version = "1.0.0"
-
 dependencies {
-    compileOnly("su.plo.voice.api:server:2.0.0+ALPHA")
+    compileOnly(libs.pv)
+    annotationProcessor(libs.lombok)
+}
 
-    annotationProcessor("org.projectlombok:lombok:+")
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven("https://repo.plasmoverse.com/snapshots")
+    maven("https://repo.plasmoverse.com/releases")
 }
 
 tasks {

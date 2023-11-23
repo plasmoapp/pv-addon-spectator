@@ -1,0 +1,16 @@
+[versions]
+kotlin = "1.8.22"
+lombok = "1.18.24"
+
+pv = "2.1.0-SNAPSHOT"
+
+pv-gradle-plugin = "1.0.2-SNAPSHOT"
+
+[libraries]
+lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+
+pv = { module = "su.plo.voice.api:server", version.ref = "pv" }
+
+[plugins]
+pv-entrypoints = { id = "su.plo.voice.plugin.entrypoints", version.ref = "pv-gradle-plugin" }
+pv-java-templates = { id = "su.plo.voice.plugin.java-templates", version.ref = "pv-gradle-plugin" }
