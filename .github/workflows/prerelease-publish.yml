@@ -3,7 +3,7 @@ name: Publish
 on:
   push:
     branches:
-      - release
+      - v1.1
 
 jobs:
   build:
@@ -29,32 +29,10 @@ jobs:
       with:
         arguments: build
 
-    - name: Publish to Modrinth/CurseForge
-      uses: Apehum/mc-publish@v1.1
-      with:
-        modrinth-id: bZwNKr3n
-        modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
-
-        loaders: |
-          fabric
-          forge
-          paper
-          spigot
-        game-versions: |
-          1.16.5
-          1.17.1
-          1.18.2
-          1.19.2
-          1.19.3
-          1.19.4
-          1.20
-          1.20.1
-          1.20.2
-          1.20.3
-          1.20.4
-        
     - name: Publish to GitHub
       uses: Apehum/mc-publish@v1.1
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        github-generate-changelog: false
+        github-generate-changelog: true
+        github-prerelease: true
+        changelog-file: changelog.md
