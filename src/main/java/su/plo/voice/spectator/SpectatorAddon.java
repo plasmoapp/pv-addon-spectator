@@ -16,7 +16,6 @@ import su.plo.voice.api.addon.annotation.Addon;
 import su.plo.voice.api.event.EventCancellableBase;
 import su.plo.voice.api.event.EventSubscribe;
 import su.plo.voice.api.server.PlasmoVoiceServer;
-import su.plo.voice.api.server.audio.capture.SelfActivationInfo;
 import su.plo.voice.api.server.audio.source.ServerEntitySource;
 import su.plo.voice.api.server.audio.source.ServerPlayerSource;
 import su.plo.voice.api.server.audio.source.ServerProximitySource;
@@ -30,7 +29,6 @@ import su.plo.voice.proto.data.audio.codec.opus.OpusDecoderInfo;
 import su.plo.voice.proto.data.audio.source.PlayerSourceInfo;
 import su.plo.voice.proto.packets.Packet;
 import su.plo.voice.proto.packets.tcp.clientbound.SourceAudioEndPacket;
-import su.plo.voice.proto.packets.tcp.clientbound.SourceInfoPacket;
 import su.plo.voice.proto.packets.udp.clientbound.SourceAudioPacket;
 
 import java.io.File;
@@ -46,7 +44,6 @@ public final class SpectatorAddon implements AddonInitializer {
 
     @InjectPlasmoVoice
     private PlasmoVoiceServer voiceServer;
-    private SelfActivationInfo selfActivationInfo;
     private SpectatorConfig config;
 
     private final Map<SourceLineKey, ServerStaticSource> staticSourceById = Maps.newConcurrentMap();
@@ -55,7 +52,6 @@ public final class SpectatorAddon implements AddonInitializer {
 
     @Override
     public void onAddonInitialize() {
-        this.selfActivationInfo = new SelfActivationInfo(voiceServer.getUdpConnectionManager());
         loadConfig();
     }
 
@@ -87,16 +83,10 @@ public final class SpectatorAddon implements AddonInitializer {
                     event.getDistance()
             );
 
-            if (source.sendAudioPacket(sourceAudioPacket, event.getDistance()) &&
-                    source instanceof ServerEntitySource &&
-                    event.getActivationId().isPresent()
-            ) {
-                selfActivationInfo.sendAudioInfo(
-                        player,
-                        source,
-                        event.getActivationId().get(),
-                        sourceAudioPacket
-                );
+            if (source instanceof ServerStaticSource) {
+                source.sendAudioPacket(sourceAudioPacket, event.getDistance());
+            } else {
+                source.sendAudioPacket(sourceAudioPacket, event.getDistance(), event.getActivationInfo());
             }
         });
     }
@@ -110,17 +100,12 @@ public final class SpectatorAddon implements AddonInitializer {
         VoiceServerPlayer player = playerSource.getPlayer();
 
         getTargetSource(playerSource, player, event).ifPresent((source) -> {
-            if (sourcePacket instanceof SourceInfoPacket && source instanceof ServerEntitySource) {
-                selfActivationInfo.updateSelfSourceInfo(player, source, ((SourceInfoPacket) sourcePacket).getSourceInfo());
-            } else if (sourcePacket instanceof SourceAudioEndPacket) {
-                SourceAudioEndPacket sourceEndPacket = (SourceAudioEndPacket) sourcePacket;
-                SourceAudioEndPacket targetSourcePacket = new SourceAudioEndPacket(source.getId(), sourceEndPacket.getSequenceNumber());
+            if (!(sourcePacket instanceof SourceAudioEndPacket)) return;
 
-                source.sendPacket(targetSourcePacket, event.getDistance());
-                if (source instanceof ServerEntitySource) {
-                    player.sendPacket(targetSourcePacket);
-                }
-            }
+            SourceAudioEndPacket sourceEndPacket = (SourceAudioEndPacket) sourcePacket;
+            SourceAudioEndPacket targetSourcePacket = new SourceAudioEndPacket(source.getId(), sourceEndPacket.getSequenceNumber());
+
+            source.sendPacket(targetSourcePacket, event.getDistance());
         });
     }
 
@@ -160,6 +145,8 @@ public final class SpectatorAddon implements AddonInitializer {
         UUID playerUuid = player.getInstance().getUuid();
 
         lastPlayerPositionTimestampById.remove(playerUuid);
+
+        // todo: fix keys
 
         ServerStaticSource staticSource = staticSourceById.remove(playerUuid);
         if (staticSource != null) staticSource.getLine().removeSource(staticSource);
