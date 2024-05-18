@@ -46,8 +46,8 @@ public final class SpectatorAddon implements AddonInitializer {
     private PlasmoVoiceServer voiceServer;
     private SpectatorConfig config;
 
-    private final Map<SourceLineKey, ServerStaticSource> staticSourceById = Maps.newConcurrentMap();
-    private final Map<SourceLineKey, ServerEntitySource> entitySourceById = Maps.newConcurrentMap();
+    private final Map<SourceLineKey, ServerStaticSource> staticSourceByLineKey = Maps.newConcurrentMap();
+    private final Map<SourceLineKey, ServerEntitySource> entitySourceByLineKey = Maps.newConcurrentMap();
     private final Map<UUID, Long> lastPlayerPositionTimestampById = Maps.newConcurrentMap();
 
     @Override
@@ -120,7 +120,7 @@ public final class SpectatorAddon implements AddonInitializer {
             throw new IllegalStateException("Failed to load config", e);
         }
 
-        staticSourceById.forEach((playerId, source) -> source.setIconVisible(config.showIcon()));
+        staticSourceByLineKey.forEach((playerId, source) -> source.setIconVisible(config.showIcon()));
     }
 
     private Optional<ServerProximitySource<?>> getTargetSource(
@@ -146,13 +146,21 @@ public final class SpectatorAddon implements AddonInitializer {
 
         lastPlayerPositionTimestampById.remove(playerUuid);
 
-        // todo: fix keys
+        staticSourceByLineKey.entrySet()
+                .stream()
+                .filter(entry -> entry.getKey().playerId.equals(playerUuid))
+                .forEach(entry -> {
+                    staticSourceByLineKey.remove(entry.getKey());
+                    entry.getValue().remove();
+                });
 
-        ServerStaticSource staticSource = staticSourceById.remove(playerUuid);
-        if (staticSource != null) staticSource.getLine().removeSource(staticSource);
-
-        ServerEntitySource entitySource = entitySourceById.remove(playerUuid);
-        if (entitySource != null) entitySource.getLine().removeSource(entitySource);
+        entitySourceByLineKey.entrySet()
+                .stream()
+                .filter(entry -> entry.getKey().playerId.equals(playerUuid))
+                .forEach(entry -> {
+                    entitySourceByLineKey.remove(entry.getKey());
+                    entry.getValue().remove();
+                });
     }
 
     private ServerStaticSource getStaticSource(
@@ -162,7 +170,7 @@ public final class SpectatorAddon implements AddonInitializer {
         PlayerSourceInfo sourceInfo = playerSource.getSourceInfo();
         SourceLineKey sourceLineKey = new SourceLineKey(player.getInstance().getUuid(), playerSource.getLine().getId());
 
-        ServerStaticSource staticSource = staticSourceById.computeIfAbsent(
+        ServerStaticSource staticSource = staticSourceByLineKey.computeIfAbsent(
                 sourceLineKey,
                 (sourceId) -> {
                     ServerStaticSource source = playerSource.getLine().createStaticSource(
@@ -194,14 +202,14 @@ public final class SpectatorAddon implements AddonInitializer {
 
         McServerEntity spectatorTarget = player.getInstance().getSpectatorTarget();
 
-        ServerEntitySource entitySource = entitySourceById.get(sourceLineKey);
+        ServerEntitySource entitySource = entitySourceByLineKey.get(sourceLineKey);
         if (entitySource == null ||
                 !entitySource.getEntity().getInstance().equals(spectatorTarget.getInstance())
         ) {
             entitySource = playerSource.getLine().createEntitySource(spectatorTarget, sourceInfo.isStereo());
             entitySource.setIconVisible(config.showIcon());
             entitySource.addFilter((listener) -> !listener.equals(player));
-            entitySourceById.put(sourceLineKey, entitySource);
+            entitySourceByLineKey.put(sourceLineKey, entitySource);
         }
 
         entitySource.setStereo(sourceInfo.isStereo());
