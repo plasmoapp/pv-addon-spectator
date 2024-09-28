@@ -18,6 +18,14 @@ repositories {
 }
 
 tasks {
+    jar {
+        enabled = false
+    }
+
+    shadowJar {
+        archiveClassifier.set("")
+    }
+
     java {
         toolchain.languageVersion.set(JavaLanguageVersion.of(8))
     }
